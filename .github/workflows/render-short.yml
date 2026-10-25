@@ -1,0 +1,52 @@
+name: Render Short
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: Video title
+        required: true
+      script:
+        description: Hinglish voiceover script
+        required: true
+      tag:
+        description: Release tag n8n will look for
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg fonts-noto-core
+          pip install edge-tts
+
+      - name: Voiceover (free Hindi neural voice)
+        env:
+          SCRIPT: ${{ inputs.script }}
+        run: |
+          printf '%s' "$SCRIPT" > script.txt
+          edge-tts --voice hi-IN-SwaraNeural --file script.txt \
+            --write-media voice.mp3 --write-subtitles voice.vtt
+
+      - name: Render vertical video
+        env:
+          TITLE: ${{ inputs.title }}
+        run: |
+          DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 voice.mp3)
+          printf '%s' "$TITLE" | fold -s -w 22 > title.txt
+          ffmpeg -y -f lavfi -i "color=c=0x0b1020:s=1080x1920:d=${DUR}:r=30" -i voice.mp3 \
+            -vf "drawtext=textfile=title.txt:fontfile=/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=200:line_spacing=12" \
+            -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest short.mp4
+
+      - name: Publish as release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.tag }}" short.mp4 \
+            --repo "${{ github.repository }}" --title "${{ inputs.tag }}" --notes "auto render"
